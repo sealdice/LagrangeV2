@@ -39,7 +39,9 @@ public sealed class Signer : BotSignProvider, IDisposable
     private readonly string? _token;
     
     private readonly string? _launcherSig;
-    private volatile string? _jwtToken;
+    private string? _jwtToken;
+    private int _refreshStarted;
+    private CancellationTokenSource? _refreshCts;
 
     public Signer(ILogger<Signer> logger, IOptions<CoreConfiguration> options)
     {
@@ -99,7 +101,11 @@ public sealed class Signer : BotSignProvider, IDisposable
             if (response.Headers.TryGetValues("X-SET-TOKEN", out var tokenValues))
             {
                 string? newToken = tokenValues.FirstOrDefault();
-                if (!string.IsNullOrEmpty(newToken)) _jwtToken = newToken;
+                if (!string.IsNullOrEmpty(newToken))
+                {
+                    Interlocked.Exchange(ref _jwtToken, newToken);
+                    EnsureRefreshStarted();
+                }
             }
 
             using var stream = await response.Content.ReadAsStreamAsync();
@@ -122,8 +128,64 @@ public sealed class Signer : BotSignProvider, IDisposable
     }
 
 
+    private void EnsureRefreshStarted()
+    {
+        if (Interlocked.CompareExchange(ref _refreshStarted, 1, 0) == 0)
+        {
+            _refreshCts = new CancellationTokenSource();
+            _ = RefreshTokenLoopAsync(_refreshCts.Token);
+        }
+    }
+
+    private async Task RefreshTokenLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromHours(4), cancellationToken);
+                await RefreshTokenAsync(cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception e)
+        {
+            _logger.LogTokenRefreshLoopFailed(e);
+        }
+    }
+
+    private async Task RefreshTokenAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var currentToken = Interlocked.CompareExchange(ref _jwtToken, null, null);
+            if (string.IsNullOrEmpty(currentToken)) return;
+
+            using var request = new HttpRequestMessage();
+            request.Method = HttpMethod.Post;
+            request.RequestUri = new Uri($"{_url}{(_url.EndsWith('/') ? "" : "/")}token/refresh");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", currentToken);
+
+            using var response = await _client.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            if (response.Headers.TryGetValues("X-SET-TOKEN", out var tokenValues))
+            {
+                string? newToken = tokenValues.FirstOrDefault();
+                if (!string.IsNullOrEmpty(newToken)) Interlocked.Exchange(ref _jwtToken, newToken);
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception e)
+        {
+            _logger.LogTokenRefreshFailed(e);
+        }
+    }
+
     public void Dispose()
     {
+        _refreshCts?.Cancel();
+        _refreshCts?.Dispose();
         _client.Dispose();
     }
 }
@@ -132,6 +194,12 @@ public static partial class SignerLoggerExtension
 {
     [LoggerMessage(LogLevel.Error, "Get sec sign failed")]
     public static partial void LogGetSecSignFailed(this ILogger<Signer> logger, Exception e);
+
+    [LoggerMessage(LogLevel.Error, "Token refresh failed")]
+    public static partial void LogTokenRefreshFailed(this ILogger<Signer> logger, Exception e);
+
+    [LoggerMessage(LogLevel.Error, "Token refresh loop failed unexpectedly")]
+    public static partial void LogTokenRefreshLoopFailed(this ILogger<Signer> logger, Exception e);
 }
 
 public class SignerResponse<T>
