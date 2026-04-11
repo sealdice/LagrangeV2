@@ -20,9 +20,9 @@ public class AcceptGroupInvitationRequestParameter(long groupId, long invitation
 {
     [JsonRequired]
     [JsonPropertyName("group_id")]
-    public long GroupId { get; } = groupId;
+    public long GroupId { get; init; } = groupId;
 
     [JsonRequired]
     [JsonPropertyName("invitation_seq")]
-    public long InvitationSeq { get; } = invitationSeq;
+    public long InvitationSeq { get; init; } = invitationSeq;
 }
