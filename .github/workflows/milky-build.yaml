@@ -26,27 +26,32 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       matrix:
         include:
           - os: windows-latest
             rid: win-x64
+            artifact-rid: win-x64
             binary-extension: '.exe'
           - os: macos-latest
             rid: osx-arm64
+            artifact-rid: osx-arm64
             binary-extension: ''
           - os: ubuntu-latest
-            rid: linux-x64
+            rid: linux-musl-x64
+            artifact-rid: linux-x64
+            binary-extension: ''
+          - os: ubuntu-24.04-arm
+            rid: linux-musl-arm64
+            artifact-rid: linux-arm64
             binary-extension: ''
 
     env:
       RUNTIME_IDENTIFIER: ${{ matrix.rid }}
 
     steps:
-      - name: Install Linux Dependencies
-        if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
-
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
@@ -55,18 +60,36 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Publish
+      - name: Publish on non-Linux
+        if: runner.os != 'Linux'
         run: dotnet publish Lagrange.Milky -c Release -r ${{ matrix.rid }}
 
-      - if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+      - name: Publish on Linux
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm \
+            -e HOME=/tmp \
+            -e DOTNET_CLI_HOME=/tmp/dotnet \
+            -e NUGET_PACKAGES=/tmp/nuget/packages \
+            -e DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+            -v "$PWD:/src" \
+            -w /src \
+            mcr.microsoft.com/dotnet/sdk:10.0-alpine-aot \
+            sh -lc "apk add --no-cache ca-certificates cmake make pkgconf openssl-dev openssl-libs-static zlib-static && mkdir -p /tmp/dotnet /tmp/nuget/packages && dotnet publish Lagrange.Milky -c Release -r ${{ matrix.rid }} && chmod -R a+rwX /src/Lagrange.Milky/bin"
+
+      - name: Rename Binary
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          mv "Lagrange.Milky/bin/Release/net10.0/${{ matrix.rid }}/publish/Lagrange.Milky${{ matrix.binary-extension }}" \
+             "Lagrange.Milky/bin/Release/net10.0/${{ matrix.rid }}/publish/Lagrange.Milky-${{ matrix.artifact-rid }}${{ matrix.binary-extension }}"
+
+      - name: Upload to Pre-Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
         with:
-          name: Lagrange.Milky-${{ matrix.rid }}
-          path: Lagrange.Milky/bin/Release/net10.0/${{ matrix.rid }}/publish/Lagrange.Milky${{ matrix.binary-extension }}
-      - if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Lagrange.Milky-${{ matrix.rid }}-symbol-files
-          path: |
-            Lagrange.Milky/bin/Release/net10.0/${{ matrix.rid }}/publish/*
-            !Lagrange.Milky/bin/Release/net10.0/${{ matrix.rid }}/publish/Lagrange.Milky${{ matrix.binary-extension }}
+          tag_name: nightly
+          name: Nightly Build
+          prerelease: true
+          make_latest: false
+          files: Lagrange.Milky/bin/Release/net10.0/${{ matrix.rid }}/publish/Lagrange.Milky-${{ matrix.artifact-rid }}${{ matrix.binary-extension }}

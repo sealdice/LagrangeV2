@@ -61,4 +61,7 @@ public static class MessageExt
 
     public static Task GroupQuit(this BotContext context, long groupUin)
         => context.EventContext.GetLogic<OperationLogic>().GroupQuit(groupUin);
+
+    public static Task SetFriendRequestAccept(this BotContext context, string targetUid)
+        => context.EventContext.GetLogic<OperationLogic>().SetFriendRequestAccept(targetUid);
 }

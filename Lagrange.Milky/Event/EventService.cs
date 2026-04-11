@@ -34,6 +34,7 @@ public class EventService(ILogger<EventService> logger, IOptions<MilkyConfigurat
         _bot.EventInvoker.RegisterEvent<LgrEvents.BotFriendRequestEvent>(HandleFriendRequestEvent);
         _bot.EventInvoker.RegisterEvent<LgrEvents.BotGroupRecallEvent>(HandleGroupRecallEvent);
         _bot.EventInvoker.RegisterEvent<LgrEvents.BotFriendRecallEvent>(HandleFriendRecallEvent);
+        _bot.EventInvoker.RegisterEvent<LgrEvents.BotGroupInviteNotificationEvent>(HandleGroupInviteNotificationEvent);
 
         return Task.CompletedTask;
     }
@@ -253,6 +254,31 @@ public class EventService(ILogger<EventService> logger, IOptions<MilkyConfigurat
         }
     }
 
+    private void HandleGroupInviteNotificationEvent(BotContext bot, LgrEvents.BotGroupInviteNotificationEvent @event)
+    {
+        try
+        {
+            _logger.LogGroupInvitationEvent(
+                (long)@event.Notification.Sequence,
+                @event.Notification.InviterUin,
+                @event.Notification.GroupUin
+            );
+            var result = _convert.GroupInvitationEvent(@event);
+            byte[] bytes = JsonUtility.SerializeToUtf8Bytes(result.GetType(), result);
+            using (_lock.UsingReadLock())
+            {
+                foreach (var handler in _handlers)
+                {
+                    handler(bytes);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            _logger.LogHandleEventException(nameof(LgrEvents.BotGroupInviteNotificationEvent), e);
+        }
+    }
+
     public Task StopAsync(CancellationToken token)
     {
         _bot.EventInvoker.UnregisterEvent<LgrEvents.BotMessageEvent>(HandleMessageEvent);
@@ -262,6 +288,7 @@ public class EventService(ILogger<EventService> logger, IOptions<MilkyConfigurat
         _bot.EventInvoker.UnregisterEvent<LgrEvents.BotFriendRequestEvent>(HandleFriendRequestEvent);
         _bot.EventInvoker.UnregisterEvent<LgrEvents.BotGroupRecallEvent>(HandleGroupRecallEvent);
         _bot.EventInvoker.UnregisterEvent<LgrEvents.BotFriendRecallEvent>(HandleFriendRecallEvent);
+        _bot.EventInvoker.UnregisterEvent<LgrEvents.BotGroupInviteNotificationEvent>(HandleGroupInviteNotificationEvent);
 
         return Task.CompletedTask;
     }

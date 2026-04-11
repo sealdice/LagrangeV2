@@ -25,7 +25,7 @@ internal class RichTextMsgProcessor : MsgPushProcessorBase
 
     private bool TryHandleLightApp(BotContext context, BotMessage message, LightAppEntity app)
     {
-        if ((app.AppName == "com.tencent.qun.invite" || app.AppName == "com.tencent.qun.invite") && TryHandleQunInvite(context, message, app)) return true;
+        if ((app.AppName == "com.tencent.qun.invite" || app.AppName == "com.tencent.qun.invite" || app.AppName == "com.tencent.tuwen.lua") && TryHandleQunInvite(context, message, app)) return true;
 
         return false;
     }
@@ -40,8 +40,8 @@ internal class RichTextMsgProcessor : MsgPushProcessorBase
 
         string? url = root.GetProperty("meta").GetProperty("news").GetProperty("jumpUrl").GetString();
         if (url == null) throw new Exception($"TryHandleQunInvite failed! LightApp: {app.Payload}");
-
-        var query = HttpUtility.ParseQueryString(new Uri(url).Query);
+        int queryStart = url.IndexOf('?');
+        var query = HttpUtility.ParseQueryString(queryStart >= 0 ? url[(queryStart + 1)..] : string.Empty);
         long uin = uint.Parse(query["groupcode"] ?? throw new Exception($"TryHandleQunInvite failed! LightApp: {app.Payload}"));
         ulong sequence = ulong.Parse(query["msgseq"] ?? throw new Exception($"TryHandleQunInvite failed! LightApp: {app.Payload}"));
 

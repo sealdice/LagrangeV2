@@ -2,6 +2,15 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine-aot AS build
 
 WORKDIR /app/src
 
+RUN apk add --no-cache \
+    ca-certificates \
+    cmake \
+    make \
+    pkgconf \
+    openssl-dev \
+    openssl-libs-static \
+    zlib-static
+
 COPY --link Lagrange.Codec/*.csproj Lagrange.Codec/
 COPY --link Lagrange.Core/*.csproj Lagrange.Core/
 COPY --link Lagrange.Milky/*.csproj Lagrange.Milky/
@@ -15,6 +24,11 @@ RUN dotnet publish Lagrange.Milky -c Release -p:DebugType=none -o /app/bin
 
 
 FROM alpine
+
+RUN apk add --no-cache ca-certificates
+
+ENV DOTNET_hostBuilder__reloadConfigOnChange=false \
+    DOTNET_USE_POLLING_FILE_WATCHER=1
 
 WORKDIR /root
 

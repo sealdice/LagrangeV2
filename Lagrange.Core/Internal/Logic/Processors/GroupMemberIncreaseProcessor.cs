@@ -37,6 +37,11 @@ internal class GroupMemberIncreaseProcessor : MsgPushProcessorBase
 
         if (@event != null)
         {
+            if (@event.MemberUin == context.BotUin) // Bot itself joined the group, resolve group info first
+            {
+                _ = await context.CacheContext.GetGroupList(true);
+            }
+
             context.EventInvoker.PostEvent(@event);
             _ = await context.CacheContext.GetMemberList(increase.GroupUin, true);
             return true;

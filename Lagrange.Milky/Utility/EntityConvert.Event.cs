@@ -56,6 +56,16 @@ public partial class EntityConvert
         )
     );
 
+    public GroupInvitationEvent GroupInvitationEvent(LgrEventArgs.BotGroupInviteNotificationEvent @event) => new(
+        @event.EventTime.ToUnixTimeSeconds(),
+        _bot.BotUin,
+        new GroupInvitationEventData(
+            (long)@event.Notification.Sequence,
+            @event.Notification.InviterUin,
+            @event.Notification.GroupUin
+        )
+    );
+
     public MessageRecallEvent MessageRecallEvent(LgrEventArgs.BotGroupRecallEvent @event) => new(
         @event.EventTime.LocalTimeToUnixTimeSeconds(),
         _bot.BotUin,

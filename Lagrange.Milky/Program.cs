@@ -2,6 +2,7 @@
 using Lagrange.Milky.Extension;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Lagrange.Milky;
 
@@ -16,15 +17,37 @@ internal static class Program
 
         CheckConfigurationFile();
 
-        await Host.CreateApplicationBuilder(args)
-            .ConfigureConfiguration(configuration => configuration
-                .AddJsonFile(Path.GetFullPath(Constants.ConfigFileName), false, true)
-            )
+        var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings
+        {
+            Args = args,
+            ApplicationName = typeof(Program).Assembly.GetName().Name,
+            ContentRootPath = Directory.GetCurrentDirectory(),
+            EnvironmentName = GetEnvironmentName(),
+        });
+
+        builder.Configuration.AddJsonFile(Path.GetFullPath(Constants.ConfigFileName), false, false);
+        builder.Configuration.AddEnvironmentVariables();
+        if (args.Length > 0)
+        {
+            builder.Configuration.AddCommandLine(args);
+        }
+
+        builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
+        builder.Logging.AddSimpleConsole();
+        builder.Logging.AddDebug();
+        builder.Logging.AddEventSourceLogger();
+
+        await builder
             .ConfigureCore()
             .ConfigureMilky()
             .Build()
             .RunAsync();
     }
+
+    private static string GetEnvironmentName()
+        => Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
+           ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+           ?? Environments.Production;
 
     private static void CheckConfigurationFile()
     {
