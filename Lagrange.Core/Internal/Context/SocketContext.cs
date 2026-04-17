@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -10,6 +11,7 @@ namespace Lagrange.Core.Internal.Context;
 internal class SocketContext : IClientListener, IDisposable
 {
     private const string Tag = nameof(SocketContext);
+    private const int ProbeTimeout = 1000;
     
     public uint HeaderSize => 4;
     
@@ -63,21 +65,85 @@ internal class SocketContext : IClientListener, IDisposable
     private async Task SortServers(string[] servers)
     {
         using var ping = new Ping();
-        var sorted = new List<(long, string)>(servers.Length);
+        var responsive = new List<(long, string)>(servers.Length);
+        var unresolved = new List<string>(servers.Length);
+        bool pingUnavailable = false;
         
         foreach (var server in servers)
         {
-            var latency = await ping.SendPingAsync(server, 1000);
-            if (latency.Status == IPStatus.Success)
+            long? latency = null;
+
+            if (!pingUnavailable)
             {
-                sorted.Add((latency.RoundtripTime, server));
-                _context.LogDebug(Tag, "Server: {0} Latency: {1}ms", server, latency.RoundtripTime);
+                try
+                {
+                    var reply = await ping.SendPingAsync(server, ProbeTimeout);
+                    if (reply.Status == IPStatus.Success) latency = reply.RoundtripTime;
+                }
+                catch (Exception e) when (IsPingUnavailable(e))
+                {
+                    pingUnavailable = true;
+                    _context.LogWarning(Tag,
+                        "Ping probe is unavailable on this platform, falling back to TCP connect latency: {0}",
+                        null,
+                        e.Message);
+                }
+                catch (PingException)
+                {
+                    // Ignore and fall back to TCP probing below.
+                }
             }
+
+            latency ??= await ProbeTcpLatency(server);
+
+            if (latency is long measuredLatency)
+            {
+                responsive.Add((measuredLatency, server));
+                _context.LogDebug(Tag, "Server: {0} Latency: {1}ms", server, measuredLatency);
+            }
+            else unresolved.Add(server);
         }
         
-        sorted.Sort((a, b) => a.Item1.CompareTo(b.Item1));
-        for (int i = 0; i < sorted.Count; i++) servers[i] = sorted[i].Item2;
+        ApplyServerOrder(servers, responsive, unresolved);
     }
+
+    internal static void ApplyServerOrder(string[] servers, List<(long Latency, string Server)> responsive, List<string> unresolved)
+    {
+        responsive.Sort((a, b) => a.Latency.CompareTo(b.Latency));
+
+        int index = 0;
+        foreach (var (_, server) in responsive) servers[index++] = server;
+        foreach (var server in unresolved) servers[index++] = server;
+    }
+
+    private async Task<long?> ProbeTcpLatency(string server)
+    {
+        using var socket = new Socket(_config.UseIPv6Network ? AddressFamily.InterNetworkV6 : AddressFamily.InterNetwork,
+            SocketType.Stream,
+            ProtocolType.Tcp);
+        using var cts = new CancellationTokenSource(ProbeTimeout);
+
+        try
+        {
+            long start = Stopwatch.GetTimestamp();
+            await socket.ConnectAsync(server, GetServerPort(), cts.Token);
+            return (long)Math.Ceiling(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (SocketException)
+        {
+            return null;
+        }
+    }
+
+    private ushort GetServerPort() => (ushort)(_config.UseIPv6Network ? 14000 : 8080);
+
+    private static bool IsPingUnavailable(Exception exception) =>
+        exception is PlatformNotSupportedException ||
+        exception is PingException { InnerException: PlatformNotSupportedException };
     
     private async Task<string[]> ResolveDns()
     {
